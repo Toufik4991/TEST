@@ -1,1 +1,1571 @@
+/* ═══════════════════════════════════════════════════════
+   🌀 GPS0S - MINI-JEU 7 : LABYRINTHE LUNAIRE
+   Concept : Trouve la sortie du labyrinthe avant la fin du temps
+   Version : RESPONSIVE + Fog of War + Ennemis + Power-ups
+   ═══════════════════════════════════════════════════════ */
+
+console.log("🌀 Chargement Jeu 7 : Labyrinthe Lunaire...");
+
+// ════════════════════════════════════════════════════════════
+// ⚙️ CONFIGURATION DU JEU
+// ════════════════════════════════════════════════════════════
+const GAME7_CONFIG = {
+    TIME_LIMIT: 60,           // 60 secondes
+    TARGET_SCORE: 200,        // Score à atteindre
+
+    // Labyrinthe
+    MAZE_SIZE: 15,            // Grille 15x15
+    CELL_SIZE: 40,            // Taille cellule (px) - sera recalculé dynamiquement
+    WALL_THICKNESS: 4,        // Épaisseur murs
+
+    // Joueur
+    PLAYER_SIZE: 30,          // Taille joueur
+    PLAYER_SPEED: 4,          // Vitesse déplacement
+    PLAYER_START_X: 1,        // Position départ (grille)
+    PLAYER_START_Y: 1,
+
+    // Objectif
+    EXIT_SIZE: 35,            // Taille sortie
+    EXIT_GLOW: 25,            // Intensité glow
+
+    // Collectables - LUNES
+    MOON_COUNT: 8,            // Nombre lunes dans le labyrinthe
+    MOON_SIZE: 25,            // Taille lune
+    MOON_POINTS: 20,          // Points par lune
+
+    // Power-ups
+    POWERUP_COUNT: 3,         // Nombre power-ups
+    POWERUP_SIZE: 30,         // Taille power-up
+    POWERUP_TYPES: {
+        SPEED: {
+            icon: '⚡',
+            duration: 5000,   // 5 secondes
+            multiplier: 1.5
+        },
+        VISION: {
+            icon: '👁️',
+            duration: 8000,   // 8 secondes
+            radius: 4         // Cases révélées
+        },
+        GHOST: {
+            icon: '👻',
+            duration: 6000,   // 6 secondes
+        }
+    },
+
+    // Ennemis
+    ENEMY_COUNT: 3,           // Nombre ennemis
+    ENEMY_SIZE: 28,           // Taille ennemi
+    ENEMY_SPEED: 2,           // Vitesse ennemi
+    ENEMY_VISION_RANGE: 150,  // Distance détection (px)
+
+    // Fog of War
+    VISION_RADIUS: 2,         // Cases visibles autour joueur
+
+    // Scoring
+    POINTS_EXIT: 100,         // Points sortie
+    POINTS_PER_SECOND: 5,     // Bonus temps restant
+    BONUS_ALL_MOONS: 150,     // Bonus toutes lunes
+    BONUS_NO_DAMAGE: 100,     // Bonus aucun dégât
+    MIN_SCORE: 50             // Score minimum
+};
+
+// ════════════════════════════════════════════════════════════
+// 🎮 ÉTAT DU JEU
+// ════════════════════════════════════════════════════════════
+const game7State = {
+    // Jeu
+    active: false,
+    paused: false,
+    started: false,
+    score: 0,
+    timeLeft: GAME7_CONFIG.TIME_LIMIT,
+    moonsCollected: 0,
+    damagesTaken: 0,
+
+    // Labyrinthe
+    maze: [],
+    visited: [],              // Fog of War
+
+    // Joueur
+    player: {
+        x: GAME7_CONFIG.PLAYER_START_X * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+        y: GAME7_CONFIG.PLAYER_START_Y * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+        gridX: GAME7_CONFIG.PLAYER_START_X,
+        gridY: GAME7_CONFIG.PLAYER_START_Y,
+        vx: 0,
+        vy: 0,
+        speed: GAME7_CONFIG.PLAYER_SPEED,
+        invincible: false,
+        ghost: false,
+        speedBoost: false
+    },
+
+    // Sortie
+    exit: {
+        gridX: GAME7_CONFIG.MAZE_SIZE - 2,
+        gridY: GAME7_CONFIG.MAZE_SIZE - 2,
+        x: 0,
+        y: 0
+    },
+
+    // Collectables - LUNES
+    moons: [],
+    powerups: [],
+
+    // Ennemis
+    enemies: [],
+
+    // Input
+    keys: {
+        up: false,
+        down: false,
+        left: false,
+        right: false
+    },
+
+    // Canvas
+    canvas: null,
+    ctx: null,
+    animationFrame: null,
+    gameTimer: null,
+
+    // Callbacks
+    onScore: null,
+    onWin: null,
+    onLose: null,
+    onUpdate: null
+};
+
+// ════════════════════════════════════════════════════════════
+// 🚀 INITIALISATION
+// ════════════════════════════════════════════════════════════
+function init(callbacks = {}) {
+    console.log("🎮 Initialisation Labyrinthe Lunaire...");
+
+    // Sauvegarder callbacks
+    game7State.onScore = callbacks.onScore;
+    game7State.onWin = callbacks.onWin;
+    game7State.onLose = callbacks.onLose;
+    game7State.onUpdate = callbacks.onUpdate;
+
+    // Reset état
+    game7State.score = 0;
+    game7State.timeLeft = GAME7_CONFIG.TIME_LIMIT;
+    game7State.moonsCollected = 0;
+    game7State.damagesTaken = 0;
+    game7State.active = true;
+    game7State.paused = false;
+    game7State.started = false;
+
+    // Reset joueur
+    game7State.player = {
+        x: GAME7_CONFIG.PLAYER_START_X * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+        y: GAME7_CONFIG.PLAYER_START_Y * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+        gridX: GAME7_CONFIG.PLAYER_START_X,
+        gridY: GAME7_CONFIG.PLAYER_START_Y,
+        vx: 0,
+        vy: 0,
+        speed: GAME7_CONFIG.PLAYER_SPEED,
+        invincible: false,
+        ghost: false,
+        speedBoost: false
+    };
+
+    // Reset input
+    game7State.keys = {
+        up: false,
+        down: false,
+        left: false,
+        right: false
+    };
+
+    // Générer labyrinthe
+    generateMaze();
+
+    // ✨ CALCUL RESPONSIVE (NOUVEAU)
+    const container = document.querySelector('.minigame-content') || document.body;
+    const size = Math.min(
+        window.innerWidth * 0.9,
+        window.innerHeight * 0.55
+    );
+    
+    // Recalcule CELL_SIZE dynamiquement
+    GAME7_CONFIG.CELL_SIZE = size / GAME7_CONFIG.MAZE_SIZE;
+    
+    console.log(`📐 Canvas: ${size}px | Case: ${GAME7_CONFIG.CELL_SIZE.toFixed(1)}px`);
+
+    // Initialiser fog of war
+    initFogOfWar();
+
+    // Placer sortie
+    placeExit();
+
+    // Placer collectables
+    placeMoons();
+    placePowerups();
+
+    // Placer ennemis
+    placeEnemies();
+
+    // Créer UI
+    createUI();
+
+    // ✨ APPLIQUER TAILLE CANVAS (NOUVEAU)
+    if (game7State.canvas) {
+        game7State.canvas.width = size;
+        game7State.canvas.height = size;
+        
+        // Met à jour CSS pour grille synchronisée
+        document.documentElement.style.setProperty('--cell-size', `${GAME7_CONFIG.CELL_SIZE}px`);
+    }
+
+    // Recalcul positions avec nouvelle CELL_SIZE
+    recalculatePositions();
+
+    // Écran démarrage
+    showStartScreen();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔄 RECALCULER TOUTES LES POSITIONS (NOUVEAU)
+// ════════════════════════════════════════════════════════════
+function recalculatePositions() {
+    // Joueur
+    game7State.player.x = game7State.player.gridX * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+    game7State.player.y = game7State.player.gridY * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+
+    // Sortie
+    game7State.exit.x = game7State.exit.gridX * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+    game7State.exit.y = game7State.exit.gridY * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+
+    // Lunes
+    game7State.moons.forEach(moon => {
+        moon.x = moon.gridX * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+        moon.y = moon.gridY * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+    });
+
+    // Power-ups
+    game7State.powerups.forEach(powerup => {
+        powerup.x = powerup.gridX * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+        powerup.y = powerup.gridY * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+    });
+
+    // Ennemis
+    game7State.enemies.forEach(enemy => {
+        enemy.x = enemy.gridX * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+        enemy.y = enemy.gridY * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+    });
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎬 ÉCRAN DÉMARRAGE
+// ════════════════════════════════════════════════════════════
+function showStartScreen() {
+    const startScreen = document.getElementById('maze-start-screen');
+    if (startScreen) {
+        startScreen.classList.remove('hidden');
+    }
+}
+
+function hideStartScreen() {
+    const startScreen = document.getElementById('maze-start-screen');
+    if (startScreen) {
+        startScreen.classList.add('hidden');
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎨 CRÉER UI
+// ════════════════════════════════════════════════════════════
+function createUI() {
+    const canvas = document.getElementById('minigame-canvas');
+    if (!canvas) {
+        console.error("❌ Canvas minigame introuvable");
+        return;
+    }
+
+    canvas.innerHTML = `
+        <div class="maze-game-container">
+            <!-- Écran démarrage -->
+            <div id="maze-start-screen" class="maze-start-screen">
+                <div class="start-content">
+                    <h2 class="game-title">🌀 LABYRINTHE LUNAIRE</h2>
+                    <p class="game-instructions">
+                        Trouve la sortie avant la fin du temps<br>
+                        Collecte les 🌙 lunes et évite les 👾 ennemis
+                    </p>
+                    <button id="btn-start-maze" class="btn-start">DÉMARRER</button>
+                </div>
+            </div>
+
+            <!-- Canvas principal -->
+            <canvas id="maze-canvas"></canvas>
+
+            <!-- Stats jeu -->
+            <div class="maze-stats">
+                <div class="stat">
+                    <span class="stat-label">⏱️</span>
+                    <span id="maze-time" class="stat-value">${game7State.timeLeft}s</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">🌙</span>
+                    <span id="maze-moons" class="stat-value">${game7State.moonsCollected}/${GAME7_CONFIG.MOON_COUNT}</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">💔</span>
+                    <span id="maze-damage" class="stat-value">${game7State.damagesTaken}</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">🎯</span>
+                    <span id="maze-score" class="stat-value">${game7State.score}</span>
+                </div>
+            </div>
+
+            <!-- Power-up actif -->
+            <div id="maze-powerup" class="maze-powerup hidden"></div>
+
+            <!-- Minimap -->
+            <div class="maze-minimap">
+                <canvas id="minimap-canvas" width="150" height="150"></canvas>
+            </div>
+
+            <!-- Contrôles mobiles -->
+            <div class="maze-controls">
+                <div class="controls-row">
+                    <button id="btn-up" class="btn-control">⬆️</button>
+                </div>
+                <div class="controls-row">
+                    <button id="btn-left" class="btn-control">⬅️</button>
+                    <button id="btn-down" class="btn-control">⬇️</button>
+                    <button id="btn-right" class="btn-control">➡️</button>
+                </div>
+            </div>
+
+            <!-- Instructions -->
+            <div class="maze-instructions">
+                💡 Brouillard de guerre actif | ⚡ Power-ups temporaires
+            </div>
+        </div>
+    `;
+
+    // Récupérer canvas
+    game7State.canvas = document.getElementById('maze-canvas');
+    game7State.ctx = game7State.canvas.getContext('2d');
+
+    // Bouton démarrer
+    const btnStart = document.getElementById('btn-start-maze');
+    if (btnStart) {
+        btnStart.addEventListener('click', startGame);
+    }
+
+    // Contrôles mobiles
+    attachMobileControls();
+}
+
+// ════════════════════════════════════════════════════════════
+// 📱 CONTRÔLES MOBILES
+// ════════════════════════════════════════════════════════════
+function attachMobileControls() {
+    const btnUp = document.getElementById('btn-up');
+    const btnDown = document.getElementById('btn-down');
+    const btnLeft = document.getElementById('btn-left');
+    const btnRight = document.getElementById('btn-right');
+
+    if (btnUp) {
+        btnUp.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            game7State.keys.up = true;
+        });
+        btnUp.addEventListener('touchend', () => {
+            game7State.keys.up = false;
+        });
+    }
+
+    if (btnDown) {
+        btnDown.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            game7State.keys.down = true;
+        });
+        btnDown.addEventListener('touchend', () => {
+            game7State.keys.down = false;
+        });
+    }
+
+    if (btnLeft) {
+        btnLeft.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            game7State.keys.left = true;
+        });
+        btnLeft.addEventListener('touchend', () => {
+            game7State.keys.left = false;
+        });
+    }
+
+    if (btnRight) {
+        btnRight.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            game7State.keys.right = true;
+        });
+        btnRight.addEventListener('touchend', () => {
+            game7State.keys.right = false;
+        });
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🌀 GÉNÉRER LABYRINTHE (DFS)
+// ════════════════════════════════════════════════════════════
+function generateMaze() {
+    const size = GAME7_CONFIG.MAZE_SIZE;
+    game7State.maze = [];
+
+    // Initialiser grille
+    for (let y = 0; y < size; y++) {
+        game7State.maze[y] = [];
+        for (let x = 0; x < size; x++) {
+            game7State.maze[y][x] = {
+                x: x,
+                y: y,
+                walls: { top: true, right: true, bottom: true, left: true },
+                visited: false
+            };
+        }
+    }
+
+    // DFS
+    const stack = [];
+    let current = { x: 1, y: 1 };
+    game7State.maze[current.y][current.x].visited = true;
+
+    while (true) {
+        // Voisins non visités
+        const neighbors = [];
+        const directions = [
+            { dx: 0, dy: -1, wall: 'top', opposite: 'bottom' },
+            { dx: 1, dy: 0, wall: 'right', opposite: 'left' },
+            { dx: 0, dy: 1, wall: 'bottom', opposite: 'top' },
+            { dx: -1, dy: 0, wall: 'left', opposite: 'right' }
+        ];
+
+        for (const dir of directions) {
+            const nx = current.x + dir.dx;
+            const ny = current.y + dir.dy;
+
+            if (nx >= 0 && nx < size && ny >= 0 && ny < size && 
+                !game7State.maze[ny][nx].visited) {
+                neighbors.push({ x: nx, y: ny, dir: dir });
+            }
+        }
+
+        if (neighbors.length > 0) {
+            // Choisir voisin aléatoire
+            const next = neighbors[Math.floor(Math.random() * neighbors.length)];
+
+            // Enlever murs entre current et next
+            game7State.maze[current.y][current.x].walls[next.dir.wall] = false;
+            game7State.maze[next.y][next.x].walls[next.dir.opposite] = false;
+
+            // Marquer visité
+            game7State.maze[next.y][next.x].visited = true;
+
+            // Push current sur stack
+            stack.push(current);
+
+            // Avancer
+            current = { x: next.x, y: next.y };
+        } else if (stack.length > 0) {
+            // Backtrack
+            current = stack.pop();
+        } else {
+            // Terminé
+            break;
+        }
+    }
+
+    // Reset visited pour fog of war
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            game7State.maze[y][x].visited = false;
+        }
+    }
+
+    console.log("✅ Labyrinthe généré");
+}
+
+// ════════════════════════════════════════════════════════════
+// 🌫️ INITIALISER FOG OF WAR
+// ════════════════════════════════════════════════════════════
+function initFogOfWar() {
+    const size = GAME7_CONFIG.MAZE_SIZE;
+    game7State.visited = [];
+
+    for (let y = 0; y < size; y++) {
+        game7State.visited[y] = [];
+        for (let x = 0; x < size; x++) {
+            game7State.visited[y][x] = false;
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 👁️ METTRE À JOUR FOG OF WAR
+// ════════════════════════════════════════════════════════════
+function updateFogOfWar() {
+    const player = game7State.player;
+    const radius = GAME7_CONFIG.VISION_RADIUS;
+
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            const gx = player.gridX + dx;
+            const gy = player.gridY + dy;
+
+            if (gx >= 0 && gx < GAME7_CONFIG.MAZE_SIZE &&
+                gy >= 0 && gy < GAME7_CONFIG.MAZE_SIZE) {
+                game7State.visited[gy][gx] = true;
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🚪 PLACER SORTIE
+// ════════════════════════════════════════════════════════════
+function placeExit() {
+    game7State.exit.gridX = GAME7_CONFIG.MAZE_SIZE - 2;
+    game7State.exit.gridY = GAME7_CONFIG.MAZE_SIZE - 2;
+    game7State.exit.x = game7State.exit.gridX * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+    game7State.exit.y = game7State.exit.gridY * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+}
+
+// ════════════════════════════════════════════════════════════
+// 🌙 PLACER LUNES
+// ════════════════════════════════════════════════════════════
+function placeMoons() {
+    game7State.moons = [];
+
+    const size = GAME7_CONFIG.MAZE_SIZE;
+    const placed = new Set();
+
+    for (let i = 0; i < GAME7_CONFIG.MOON_COUNT; i++) {
+        let gx, gy, key;
+
+        do {
+            gx = Math.floor(Math.random() * (size - 2)) + 1;
+            gy = Math.floor(Math.random() * (size - 2)) + 1;
+            key = `${gx},${gy}`;
+        } while (placed.has(key) || 
+                (gx === GAME7_CONFIG.PLAYER_START_X && gy === GAME7_CONFIG.PLAYER_START_Y) ||
+                (gx === game7State.exit.gridX && gy === game7State.exit.gridY));
+
+        placed.add(key);
+
+        game7State.moons.push({
+            gridX: gx,
+            gridY: gy,
+            x: gx * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+            y: gy * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+            collected: false,
+            angle: Math.random() * Math.PI * 2
+        });
+    }
+
+    console.log(`🌙 ${GAME7_CONFIG.MOON_COUNT} lunes placées`);
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎁 PLACER POWER-UPS
+// ════════════════════════════════════════════════════════════
+function placePowerups() {
+    game7State.powerups = [];
+
+    const size = GAME7_CONFIG.MAZE_SIZE;
+    const placed = new Set();
+    const types = Object.keys(GAME7_CONFIG.POWERUP_TYPES);
+
+    for (let i = 0; i < GAME7_CONFIG.POWERUP_COUNT; i++) {
+        let gx, gy, key;
+
+        do {
+            gx = Math.floor(Math.random() * (size - 2)) + 1;
+            gy = Math.floor(Math.random() * (size - 2)) + 1;
+            key = `${gx},${gy}`;
+        } while (placed.has(key) || 
+                (gx === GAME7_CONFIG.PLAYER_START_X && gy === GAME7_CONFIG.PLAYER_START_Y) ||
+                (gx === game7State.exit.gridX && gy === game7State.exit.gridY));
+
+        placed.add(key);
+
+        const type = types[i % types.length];
+
+        game7State.powerups.push({
+            gridX: gx,
+            gridY: gy,
+            x: gx * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+            y: gy * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+            type: type,
+            collected: false
+        });
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 👾 PLACER ENNEMIS
+// ════════════════════════════════════════════════════════════
+function placeEnemies() {
+    game7State.enemies = [];
+
+    const size = GAME7_CONFIG.MAZE_SIZE;
+    const placed = new Set();
+
+    for (let i = 0; i < GAME7_CONFIG.ENEMY_COUNT; i++) {
+        let gx, gy, key;
+
+        do {
+            gx = Math.floor(Math.random() * (size - 2)) + 1;
+            gy = Math.floor(Math.random() * (size - 2)) + 1;
+            key = `${gx},${gy}`;
+        } while (placed.has(key) || 
+                (gx === GAME7_CONFIG.PLAYER_START_X && gy === GAME7_CONFIG.PLAYER_START_Y) ||
+                (gx === game7State.exit.gridX && gy === game7State.exit.gridY));
+
+        placed.add(key);
+
+        game7State.enemies.push({
+            x: gx * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+            y: gy * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2,
+            gridX: gx,
+            gridY: gy,
+            targetGridX: gx,
+            targetGridY: gy,
+            speed: GAME7_CONFIG.ENEMY_SPEED,
+            chasing: false
+        });
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎮 DÉMARRER JEU
+// ════════════════════════════════════════════════════════════
+function startGame() {
+    console.log("🎮 Démarrage Labyrinthe Lunaire...");
+
+    game7State.started = true;
+    hideStartScreen();
+
+    // Timer principal
+    game7State.gameTimer = setInterval(() => {
+        if (game7State.paused) return;
+
+        game7State.timeLeft--;
+        updateUI();
+
+        if (game7State.timeLeft <= 0) {
+            endGame(false);
+        }
+    }, 1000);
+
+    // Attacher événements
+    attachEvents();
+
+    // Révéler position départ
+    updateFogOfWar();
+
+    // Boucle animation
+    gameLoop();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎯 ATTACHER ÉVÉNEMENTS
+// ════════════════════════════════════════════════════════════
+function attachEvents() {
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+}
+
+function handleKeyDown(event) {
+    if (!game7State.started || game7State.paused) return;
+
+    switch (event.key) {
+        case 'ArrowUp':
+        case 'w':
+        case 'W':
+        case 'z':
+        case 'Z':
+            game7State.keys.up = true;
+            event.preventDefault();
+            break;
+
+        case 'ArrowDown':
+        case 's':
+        case 'S':
+            game7State.keys.down = true;
+            event.preventDefault();
+            break;
+
+        case 'ArrowLeft':
+        case 'a':
+        case 'A':
+        case 'q':
+        case 'Q':
+            game7State.keys.left = true;
+            event.preventDefault();
+            break;
+
+        case 'ArrowRight':
+        case 'd':
+        case 'D':
+            game7State.keys.right = true;
+            event.preventDefault();
+            break;
+    }
+}
+
+function handleKeyUp(event) {
+    switch (event.key) {
+        case 'ArrowUp':
+        case 'w':
+        case 'W':
+        case 'z':
+        case 'Z':
+            game7State.keys.up = false;
+            break;
+
+        case 'ArrowDown':
+        case 's':
+        case 'S':
+            game7State.keys.down = false;
+            break;
+
+        case 'ArrowLeft':
+        case 'a':
+        case 'A':
+        case 'q':
+        case 'Q':
+            game7State.keys.left = false;
+            break;
+
+        case 'ArrowRight':
+        case 'd':
+        case 'D':
+            game7State.keys.right = false;
+            break;
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔄 BOUCLE PRINCIPALE
+// ════════════════════════════════════════════════════════════
+function gameLoop() {
+    if (!game7State.active || game7State.paused) return;
+
+    updateGame();
+    renderGame();
+    renderMinimap();
+
+    game7State.animationFrame = requestAnimationFrame(gameLoop);
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔄 METTRE À JOUR JEU
+// ════════════════════════════════════════════════════════════
+function updateGame() {
+    updatePlayer();
+    updateEnemies();
+    updateFogOfWar();
+    checkCollisions();
+    
+    // Animation rotation des lunes
+    game7State.moons.forEach(moon => {
+        if (!moon.collected) {
+            moon.angle += 0.03;
+        }
+    });
+}
+
+// ════════════════════════════════════════════════════════════
+// 🏃 METTRE À JOUR JOUEUR
+// ════════════════════════════════════════════════════════════
+function updatePlayer() {
+    const player = game7State.player;
+    const keys = game7State.keys;
+
+    // Vitesse actuelle
+    let currentSpeed = player.speed;
+    if (player.speedBoost) {
+        currentSpeed *= GAME7_CONFIG.POWERUP_TYPES.SPEED.multiplier;
+    }
+
+    // Calculer vélocité
+    let vx = 0;
+    let vy = 0;
+
+    if (keys.up) vy -= currentSpeed;
+    if (keys.down) vy += currentSpeed;
+    if (keys.left) vx -= currentSpeed;
+    if (keys.right) vx += currentSpeed;
+
+    // Normaliser diagonale
+    if (vx !== 0 && vy !== 0) {
+        const mag = Math.sqrt(vx * vx + vy * vy);
+        vx = (vx / mag) * currentSpeed;
+        vy = (vy / mag) * currentSpeed;
+    }
+
+    // Nouvelle position tentative
+    let newX = player.x + vx;
+    let newY = player.y + vy;
+
+    // Collision murs (sauf si ghost)
+    if (!player.ghost) {
+        // Vérifier murs horizontaux
+        if (vx !== 0) {
+            const testX = newX + (vx > 0 ? GAME7_CONFIG.PLAYER_SIZE / 2 : -GAME7_CONFIG.PLAYER_SIZE / 2);
+            const testGridX = Math.floor(testX / GAME7_CONFIG.CELL_SIZE);
+
+            if (testGridX >= 0 && testGridX < GAME7_CONFIG.MAZE_SIZE) {
+                const cell = game7State.maze[player.gridY][player.gridX];
+
+                if (testGridX > player.gridX && cell.walls.right) {
+                    newX = player.x;
+                } else if (testGridX < player.gridX && cell.walls.left) {
+                    newX = player.x;
+                }
+            }
+        }
+
+        // Vérifier murs verticaux
+        if (vy !== 0) {
+            const testY = newY + (vy > 0 ? GAME7_CONFIG.PLAYER_SIZE / 2 : -GAME7_CONFIG.PLAYER_SIZE / 2);
+            const testGridY = Math.floor(testY / GAME7_CONFIG.CELL_SIZE);
+
+            if (testGridY >= 0 && testGridY < GAME7_CONFIG.MAZE_SIZE) {
+                const cell = game7State.maze[player.gridY][player.gridX];
+
+                if (testGridY > player.gridY && cell.walls.bottom) {
+                    newY = player.y;
+                } else if (testGridY < player.gridY && cell.walls.top) {
+                    newY = player.y;
+                }
+            }
+        }
+    }
+
+    // Appliquer nouvelle position
+    player.x = newX;
+    player.y = newY;
+
+    // Mettre à jour grille
+    player.gridX = Math.floor(player.x / GAME7_CONFIG.CELL_SIZE);
+    player.gridY = Math.floor(player.y / GAME7_CONFIG.CELL_SIZE);
+
+    // Clamp dans grille
+    player.gridX = Math.max(0, Math.min(GAME7_CONFIG.MAZE_SIZE - 1, player.gridX));
+    player.gridY = Math.max(0, Math.min(GAME7_CONFIG.MAZE_SIZE - 1, player.gridY));
+}
+
+// ════════════════════════════════════════════════════════════
+// 👾 METTRE À JOUR ENNEMIS
+// ════════════════════════════════════════════════════════════
+function updateEnemies() {
+    const player = game7State.player;
+
+    game7State.enemies.forEach(enemy => {
+        // Distance au joueur
+        const dx = player.x - enemy.x;
+        const dy = player.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // Mode chasse si proche
+        enemy.chasing = dist < GAME7_CONFIG.ENEMY_VISION_RANGE;
+
+        if (enemy.chasing) {
+            // Poursuivre joueur
+            enemy.targetGridX = player.gridX;
+            enemy.targetGridY = player.gridY;
+        } else {
+            // Patrouille aléatoire
+            const atTarget = 
+                enemy.gridX === enemy.targetGridX && 
+                enemy.gridY === enemy.targetGridY;
+
+            if (atTarget || Math.random() < 0.02) {
+                const directions = [
+                    { dx: 0, dy: -1 },
+                    { dx: 1, dy: 0 },
+                    { dx: 0, dy: 1 },
+                    { dx: -1, dy: 0 }
+                ];
+
+                const dir = directions[Math.floor(Math.random() * directions.length)];
+
+                enemy.targetGridX = Math.max(0, Math.min(GAME7_CONFIG.MAZE_SIZE - 1, enemy.gridX + dir.dx));
+                enemy.targetGridY = Math.max(0, Math.min(GAME7_CONFIG.MAZE_SIZE - 1, enemy.gridY + dir.dy));
+            }
+        }
+
+        // Déplacement vers cible
+        const targetX = enemy.targetGridX * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+        const targetY = enemy.targetGridY * GAME7_CONFIG.CELL_SIZE + GAME7_CONFIG.CELL_SIZE / 2;
+
+        const dx2 = targetX - enemy.x;
+        const dy2 = targetY - enemy.y;
+        const moveDist = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+
+        if (moveDist > 1) {
+            enemy.x += (dx2 / moveDist) * enemy.speed;
+            enemy.y += (dy2 / moveDist) * enemy.speed;
+        }
+
+        // Mettre à jour grille
+        enemy.gridX = Math.floor(enemy.x / GAME7_CONFIG.CELL_SIZE);
+        enemy.gridY = Math.floor(enemy.y / GAME7_CONFIG.CELL_SIZE);
+    });
+}
+
+// ════════════════════════════════════════════════════════════
+// 💥 VÉRIFIER COLLISIONS
+// ════════════════════════════════════════════════════════════
+function checkCollisions() {
+    const player = game7State.player;
+
+    // Collision sortie
+    const exitDist = Math.sqrt(
+        Math.pow(player.x - game7State.exit.x, 2) +
+        Math.pow(player.y - game7State.exit.y, 2)
+    );
+
+    if (exitDist < (GAME7_CONFIG.PLAYER_SIZE + GAME7_CONFIG.EXIT_SIZE) / 2) {
+        reachExit();
+        return;
+    }
+
+    // Collision lunes
+    game7State.moons.forEach((moon, index) => {
+        if (moon.collected) return;
+
+        const dist = Math.sqrt(
+            Math.pow(player.x - moon.x, 2) +
+            Math.pow(player.y - moon.y, 2)
+        );
+
+        if (dist < (GAME7_CONFIG.PLAYER_SIZE + GAME7_CONFIG.MOON_SIZE) / 2) {
+            collectMoon(index);
+        }
+    });
+
+    // Collision power-ups
+    game7State.powerups.forEach((powerup, index) => {
+        if (powerup.collected) return;
+
+        const dist = Math.sqrt(
+            Math.pow(player.x - powerup.x, 2) +
+            Math.pow(player.y - powerup.y, 2)
+        );
+
+        if (dist < (GAME7_CONFIG.PLAYER_SIZE + GAME7_CONFIG.POWERUP_SIZE) / 2) {
+            collectPowerup(index);
+        }
+    });
+
+    // Collision ennemis
+    if (!player.invincible && !player.ghost) {
+        game7State.enemies.forEach(enemy => {
+            const dist = Math.sqrt(
+                Math.pow(player.x - enemy.x, 2) +
+                Math.pow(player.y - enemy.y, 2)
+            );
+
+            if (dist < (GAME7_CONFIG.PLAYER_SIZE + GAME7_CONFIG.ENEMY_SIZE) / 2) {
+                takeDamage();
+            }
+        });
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🚪 ATTEINDRE SORTIE
+// ════════════════════════════════════════════════════════════
+function reachExit() {
+    console.log("🚪 Sortie atteinte !");
+    endGame(true);
+}
+
+// ════════════════════════════════════════════════════════════
+// 🌙 COLLECTER LUNE
+// ════════════════════════════════════════════════════════════
+function collectMoon(index) {
+    game7State.moons[index].collected = true;
+    game7State.moonsCollected++;
+    addScore(GAME7_CONFIG.MOON_POINTS);
+
+    console.log(`🌙 Lune ${game7State.moonsCollected}/${GAME7_CONFIG.MOON_COUNT} collectée`);
+
+    if (window.UI && window.UI.showToast) {
+        window.UI.showToast(`🌙 +${GAME7_CONFIG.MOON_POINTS}pts`, 'success');
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎁 COLLECTER POWER-UP
+// ════════════════════════════════════════════════════════════
+function collectPowerup(index) {
+    const powerup = game7State.powerups[index];
+    powerup.collected = true;
+
+    const typeData = GAME7_CONFIG.POWERUP_TYPES[powerup.type];
+
+    switch (powerup.type) {
+        case 'SPEED':
+            game7State.player.speedBoost = true;
+            showPowerupUI(`⚡ Vitesse x${typeData.multiplier}`);
+            setTimeout(() => {
+                game7State.player.speedBoost = false;
+                hidePowerupUI();
+            }, typeData.duration);
+            break;
+
+        case 'VISION':
+            showPowerupUI(`👁️ Vision étendue`);
+            const originalRadius = GAME7_CONFIG.VISION_RADIUS;
+            GAME7_CONFIG.VISION_RADIUS = typeData.radius;
+            updateFogOfWar();
+            setTimeout(() => {
+                GAME7_CONFIG.VISION_RADIUS = originalRadius;
+                hidePowerupUI();
+            }, typeData.duration);
+            break;
+
+        case 'GHOST':
+            game7State.player.ghost = true;
+            game7State.player.invincible = true;
+            showPowerupUI('👻 Mode fantôme');
+            setTimeout(() => {
+                game7State.player.ghost = false;
+                game7State.player.invincible = false;
+                hidePowerupUI();
+            }, typeData.duration);
+            break;
+    }
+
+    console.log(`🎁 Power-up ${powerup.type} collecté`);
+}
+
+// ════════════════════════════════════════════════════════════
+// 💔 PRENDRE DÉGÂT
+// ════════════════════════════════════════════════════════════
+function takeDamage() {
+    if (game7State.player.invincible) return;
+
+    game7State.damagesTaken++;
+    game7State.player.invincible = true;
+
+    console.log(`💔 Dégât pris (${game7State.damagesTaken})`);
+
+    if (window.UI && window.UI.showToast) {
+        window.UI.showToast('💔 Touché !', 'danger');
+    }
+
+    // Invincibilité temporaire
+    setTimeout(() => {
+        game7State.player.invincible = false;
+    }, 2000);
+
+    updateUI();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎨 RENDER JEU
+// ════════════════════════════════════════════════════════════
+function renderGame() {
+    const ctx = game7State.ctx;
+    const canvas = game7State.canvas;
+
+    // Clear
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Fond
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Render labyrinthe
+    renderMaze();
+
+    // Render collectables (non collectés)
+    game7State.moons.forEach(moon => {
+        if (!moon.collected && game7State.visited[moon.gridY][moon.gridX]) {
+            renderMoon(moon);
+        }
+    });
+
+    game7State.powerups.forEach(powerup => {
+        if (!powerup.collected && game7State.visited[powerup.gridY][powerup.gridX]) {
+            renderPowerup(powerup);
+        }
+    });
+
+    // Render sortie (si révélée)
+    if (game7State.visited[game7State.exit.gridY][game7State.exit.gridX]) {
+        renderExit();
+    }
+
+    // Render ennemis (si révélés)
+    game7State.enemies.forEach(enemy => {
+        if (game7State.visited[enemy.gridY][enemy.gridX]) {
+            renderEnemy(enemy);
+        }
+    });
+
+    // Render joueur
+    renderPlayer();
+
+    // Fog of war
+    renderFog();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🌀 RENDER LABYRINTHE
+// ════════════════════════════════════════════════════════════
+function renderMaze() {
+    const ctx = game7State.ctx;
+
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = GAME7_CONFIG.WALL_THICKNESS;
+
+    for (let y = 0; y < GAME7_CONFIG.MAZE_SIZE; y++) {
+        for (let x = 0; x < GAME7_CONFIG.MAZE_SIZE; x++) {
+            // Révéler seulement si visité
+            if (!game7State.visited[y][x]) continue;
+
+            const cell = game7State.maze[y][x];
+            const px = x * GAME7_CONFIG.CELL_SIZE;
+            const py = y * GAME7_CONFIG.CELL_SIZE;
+
+            if (cell.walls.top) {
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(px + GAME7_CONFIG.CELL_SIZE, py);
+                ctx.stroke();
+            }
+
+            if (cell.walls.right) {
+                ctx.beginPath();
+                ctx.moveTo(px + GAME7_CONFIG.CELL_SIZE, py);
+                ctx.lineTo(px + GAME7_CONFIG.CELL_SIZE, py + GAME7_CONFIG.CELL_SIZE);
+                ctx.stroke();
+            }
+
+            if (cell.walls.bottom) {
+                ctx.beginPath();
+                ctx.moveTo(px, py + GAME7_CONFIG.CELL_SIZE);
+                ctx.lineTo(px + GAME7_CONFIG.CELL_SIZE, py + GAME7_CONFIG.CELL_SIZE);
+                ctx.stroke();
+            }
+
+            if (cell.walls.left) {
+                ctx.beginPath();
+                ctx.moveTo(px, py);
+                ctx.lineTo(px, py + GAME7_CONFIG.CELL_SIZE);
+                ctx.stroke();
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🏃 RENDER JOUEUR
+// ════════════════════════════════════════════════════════════
+function renderPlayer() {
+    const ctx = game7State.ctx;
+    const player = game7State.player;
+
+    ctx.save();
+
+    // Effet ghost
+    if (player.ghost) {
+        ctx.globalAlpha = 0.5;
+    }
+
+    // Glow
+    ctx.shadowColor = '#00ffff';
+    ctx.shadowBlur = 20;
+
+    // Corps
+    ctx.fillStyle = '#00ffff';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, GAME7_CONFIG.PLAYER_SIZE / 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Invincibilité (clignotement)
+    if (player.invincible && Math.floor(Date.now() / 100) % 2) {
+        ctx.strokeStyle = '#ff0066';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🚪 RENDER SORTIE
+// ════════════════════════════════════════════════════════════
+function renderExit() {
+    const ctx = game7State.ctx;
+    const exit = game7State.exit;
+
+    ctx.save();
+
+    // Glow vert
+    ctx.shadowColor = '#00ff00';
+    ctx.shadowBlur = GAME7_CONFIG.EXIT_GLOW;
+
+    ctx.fillStyle = '#00ff00';
+    ctx.beginPath();
+    ctx.arc(exit.x, exit.y, GAME7_CONFIG.EXIT_SIZE / 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🌙 RENDER LUNE
+// ════════════════════════════════════════════════════════════
+function renderMoon(moon) {
+    const ctx = game7State.ctx;
+
+    ctx.save();
+
+    ctx.translate(moon.x, moon.y);
+    ctx.rotate(moon.angle);
+
+    // Glow argenté
+    ctx.shadowColor = '#e0e0e0';
+    ctx.shadowBlur = 20;
+
+    // Corps lune
+    ctx.fillStyle = '#f0f0f0';
+    ctx.beginPath();
+    ctx.arc(0, 0, GAME7_CONFIG.MOON_SIZE / 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Cratères
+    ctx.fillStyle = '#d0d0d0';
+    ctx.beginPath();
+    ctx.arc(-5, -3, 3, 0, Math.PI * 2);
+    ctx.arc(4, 5, 2, 0, Math.PI * 2);
+    ctx.arc(2, -6, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎁 RENDER POWER-UP
+// ════════════════════════════════════════════════════════════
+function renderPowerup(powerup) {
+    const ctx = game7State.ctx;
+    const typeData = GAME7_CONFIG.POWERUP_TYPES[powerup.type];
+
+    ctx.save();
+
+    ctx.shadowColor = '#ff00ff';
+    ctx.shadowBlur = 20;
+
+    ctx.font = `${GAME7_CONFIG.POWERUP_SIZE}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ff00ff';
+    ctx.fillText(typeData.icon, powerup.x, powerup.y);
+
+    ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+// 👾 RENDER ENNEMI
+// ════════════════════════════════════════════════════════════
+function renderEnemy(enemy) {
+    const ctx = game7State.ctx;
+
+    ctx.save();
+
+    // Couleur selon mode
+    const color = enemy.chasing ? '#ff0066' : '#ff6600';
+
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 15;
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(enemy.x, enemy.y, GAME7_CONFIG.ENEMY_SIZE / 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🌫️ RENDER FOG OF WAR
+// ════════════════════════════════════════════════════════════
+function renderFog() {
+    const ctx = game7State.ctx;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+
+    for (let y = 0; y < GAME7_CONFIG.MAZE_SIZE; y++) {
+        for (let x = 0; x < GAME7_CONFIG.MAZE_SIZE; x++) {
+            if (!game7State.visited[y][x]) {
+                ctx.fillRect(
+                    x * GAME7_CONFIG.CELL_SIZE,
+                    y * GAME7_CONFIG.CELL_SIZE,
+                    GAME7_CONFIG.CELL_SIZE,
+                    GAME7_CONFIG.CELL_SIZE
+                );
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🗺️ RENDER MINIMAP
+// ════════════════════════════════════════════════════════════
+function renderMinimap() {
+    const canvas = document.getElementById('minimap-canvas');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const size = canvas.width;
+    const cellSize = size / GAME7_CONFIG.MAZE_SIZE;
+
+    // Fond
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, size, size);
+
+    // Cellules visitées
+    ctx.fillStyle = '#333333';
+    for (let y = 0; y < GAME7_CONFIG.MAZE_SIZE; y++) {
+        for (let x = 0; x < GAME7_CONFIG.MAZE_SIZE; x++) {
+            if (game7State.visited[y][x]) {
+                ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            }
+        }
+    }
+
+    // Lunes collectées
+    ctx.fillStyle = '#f0f0f0';
+    game7State.moons.forEach(moon => {
+        if (moon.collected && game7State.visited[moon.gridY][moon.gridX]) {
+            ctx.fillRect(
+                moon.gridX * cellSize + cellSize / 4,
+                moon.gridY * cellSize + cellSize / 4,
+                cellSize / 2,
+                cellSize / 2
+            );
+        }
+    });
+
+    // Sortie
+    if (game7State.visited[game7State.exit.gridY][game7State.exit.gridX]) {
+        ctx.fillStyle = '#00ff00';
+        ctx.fillRect(
+            game7State.exit.gridX * cellSize,
+            game7State.exit.gridY * cellSize,
+            cellSize,
+            cellSize
+        );
+    }
+
+    // Joueur
+    ctx.fillStyle = '#00ffff';
+    ctx.fillRect(
+        game7State.player.gridX * cellSize,
+        game7State.player.gridY * cellSize,
+        cellSize,
+        cellSize
+    );
+
+    // Bordure
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, size, size);
+}
+
+// ════════════════════════════════════════════════════════════
+// ⭐ AJOUTER SCORE
+// ════════════════════════════════════════════════════════════
+function addScore(points) {
+    game7State.score += points;
+
+    if (game7State.onScore) {
+        game7State.onScore(game7State.score);
+    }
+
+    updateUI();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔄 METTRE À JOUR UI
+// ════════════════════════════════════════════════════════════
+function updateUI() {
+    const timeEl = document.getElementById('maze-time');
+    if (timeEl) {
+        timeEl.textContent = `${game7State.timeLeft}s`;
+        if (game7State.timeLeft <= 10) {
+            timeEl.style.color = '#ff0066';
+        }
+    }
+
+    const moonsEl = document.getElementById('maze-moons');
+    if (moonsEl) {
+        moonsEl.textContent = `${game7State.moonsCollected}/${GAME7_CONFIG.MOON_COUNT}`;
+    }
+
+    const damageEl = document.getElementById('maze-damage');
+    if (damageEl) {
+        damageEl.textContent = game7State.damagesTaken;
+        if (game7State.damagesTaken > 0) {
+            damageEl.style.color = '#ff0000';
+        }
+    }
+
+    const scoreEl = document.getElementById('maze-score');
+    if (scoreEl) {
+        scoreEl.textContent = game7State.score;
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🎁 AFFICHER POWER-UP UI
+// ════════════════════════════════════════════════════════════
+function showPowerupUI(text) {
+    const powerupEl = document.getElementById('maze-powerup');
+    if (powerupEl) {
+        powerupEl.textContent = text;
+        powerupEl.classList.remove('hidden');
+    }
+}
+
+function hidePowerupUI() {
+    const powerupEl = document.getElementById('maze-powerup');
+    if (powerupEl) {
+        powerupEl.classList.add('hidden');
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🏁 FIN DU JEU
+// ════════════════════════════════════════════════════════════
+function endGame(reachedExit) {
+    console.log(`🏁 Fin Jeu 7 - ${reachedExit ? 'Sortie atteinte' : 'Temps écoulé'}`);
+
+    game7State.active = false;
+
+    if (game7State.gameTimer) {
+        clearInterval(game7State.gameTimer);
+    }
+    if (game7State.animationFrame) {
+        cancelAnimationFrame(game7State.animationFrame);
+    }
+
+    if (reachedExit) {
+        let finalScore = game7State.score;
+
+        finalScore += GAME7_CONFIG.POINTS_EXIT;
+        finalScore += game7State.timeLeft * GAME7_CONFIG.POINTS_PER_SECOND;
+
+        if (game7State.moonsCollected === GAME7_CONFIG.MOON_COUNT) {
+            finalScore += GAME7_CONFIG.BONUS_ALL_MOONS;
+            console.log(`🌙 Bonus toutes les lunes : +${GAME7_CONFIG.BONUS_ALL_MOONS}pts`);
+        }
+
+        if (game7State.damagesTaken === 0) {
+            finalScore += GAME7_CONFIG.BONUS_NO_DAMAGE;
+            console.log(`💪 Bonus aucun dégât : +${GAME7_CONFIG.BONUS_NO_DAMAGE}pts`);
+        }
+
+        game7State.score = Math.max(GAME7_CONFIG.MIN_SCORE, finalScore);
+
+        console.log(`✅ Score final: ${game7State.score}pts`);
+
+        if (game7State.onWin) {
+            game7State.onWin(game7State.score);
+        }
+
+        if (game7State.onScore) {
+            game7State.onScore(game7State.score);
+        }
+    } else {
+        console.log("❌ Temps écoulé");
+
+        if (game7State.onLose) {
+            game7State.onLose();
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// ⏸️ PAUSE / RESUME
+// ════════════════════════════════════════════════════════════
+function pause() {
+    console.log("⏸️ Pause Jeu 7");
+    game7State.paused = true;
+}
+
+function resume() {
+    console.log("▶️ Resume Jeu 7");
+    game7State.paused = false;
+    if (game7State.active) {
+        gameLoop();
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔄 RECOMMENCER
+// ════════════════════════════════════════════════════════════
+function restart() {
+    console.log("🔄 Restart Jeu 7");
+    destroy();
+    init({
+        onScore: game7State.onScore,
+        onWin: game7State.onWin,
+        onLose: game7State.onLose,
+        onUpdate: game7State.onUpdate
+    });
+}
+
+// ════════════════════════════════════════════════════════════
+// 🗑️ DÉTRUIRE
+// ════════════════════════════════════════════════════════════
+function destroy() {
+    console.log("🗑️ Destruction Jeu 7");
+
+    game7State.active = false;
+
+    if (game7State.gameTimer) {
+        clearInterval(game7State.gameTimer);
+    }
+    if (game7State.animationFrame) {
+        cancelAnimationFrame(game7State.animationFrame);
+    }
+
+    document.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('keyup', handleKeyUp);
+
+    const canvas = document.getElementById('minigame-canvas');
+    if (canvas) {
+        canvas.innerHTML = '';
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔄 GESTION ROTATION ÉCRAN (NOUVEAU)
+// ════════════════════════════════════════════════════════════
+window.addEventListener('resize', () => {
+    if (game7State.active && game7State.canvas) {
+        const container = document.querySelector('.minigame-content') || document.body;
+        const size = Math.min(
+            window.innerWidth * 0.9,
+            window.innerHeight * 0.55
+        );
+        
+        game7State.canvas.width = size;
+        game7
 
